@@ -22709,6 +22709,7 @@ namespace ts {
             // Ideally we could use the ImportClause directly as a key, but must wait until we have full ES6 maps. So must store key along with value.
             const unusedImports = createMap<[ImportClause, ImportedDeclaration[]]>();
             const unusedDestructures = createMap<[ObjectBindingPattern, BindingElement[]]>();
+            const unusedVariables = createMap<[VariableStatement, VariableDeclaration[]]>();
             nodeWithLocals.locals.forEach(local => {
                 // If it's purely a type parameter, ignore, will be checked in `checkUnusedTypeParameters`.
                 // If it's a type parameter merged with a parameter, check if the parameter-side is used.
@@ -22728,6 +22729,9 @@ namespace ts {
                             addToGroup(unusedDestructures, declaration.parent, declaration, getNodeId);
                         }
                     }
+                    else if (isVariableDeclaration(declaration) && isVariableStatement(declaration.parent.parent)) {
+                        addToGroup(unusedVariables, declaration.parent.parent, declaration, getNodeId);
+                    }
                     else {
                         const parameter = local.valueDeclaration && tryGetRootParameterDeclaration(local.valueDeclaration);
                         if (parameter) {
@@ -22744,28 +22748,42 @@ namespace ts {
             });
             unusedImports.forEach(([importClause, unuseds]) => {
                 const importDecl = importClause.parent;
-                if (forEachImportedDeclaration(importClause, d => !contains(unuseds, d))) {
-                    for (const unused of unuseds) errorUnusedLocal(unused, idText(unused.name), addDiagnostic);
-                }
-                else if (unuseds.length === 1) {
-                    addDiagnostic(UnusedKind.Local, createDiagnosticForNode(importDecl, Diagnostics._0_is_declared_but_its_value_is_never_read, idText(first(unuseds).name)));
+                const nDeclarations = (importClause.name ? 1 : 0) +
+                    (importClause.namedBindings ?
+                        (importClause.namedBindings.kind === SyntaxKind.NamespaceImport ? 1 : importClause.namedBindings.elements.length)
+                        : 0);
+                if (nDeclarations === unuseds.length) {
+                    addDiagnostic(UnusedKind.Local, unuseds.length === 1
+                        ? createDiagnosticForNode(importDecl, Diagnostics._0_is_declared_but_its_value_is_never_read, idText(first(unuseds).name))
+                        : createDiagnosticForNode(importDecl, Diagnostics.All_imports_in_import_declaration_are_unused));
                 }
                 else {
-                    addDiagnostic(UnusedKind.Local, createDiagnosticForNode(importDecl, Diagnostics.All_imports_in_import_declaration_are_unused));
+                    for (const unused of unuseds) errorUnusedLocal(unused, idText(unused.name), addDiagnostic);
                 }
             });
             unusedDestructures.forEach(([bindingPattern, bindingElements]) => {
                 const kind = tryGetRootParameterDeclaration(bindingPattern.parent) ? UnusedKind.Parameter : UnusedKind.Local;
-                if (!bindingPattern.elements.every(e => contains(bindingElements, e))) {
+                if (bindingPattern.elements.length === bindingElements.length) {
+                    addDiagnostic(kind, bindingElements.length === 1
+                        ? createDiagnosticForNode(bindingPattern, Diagnostics._0_is_declared_but_its_value_is_never_read, idText(cast(first(bindingElements).name, isIdentifier)))
+                        : createDiagnosticForNode(bindingPattern, Diagnostics.All_destructured_elements_are_unused));
+                }
+                else {
                     for (const e of bindingElements) {
                         addDiagnostic(kind, createDiagnosticForNode(e, Diagnostics._0_is_declared_but_its_value_is_never_read, idText(cast(e.name, isIdentifier))));
                     }
                 }
-                else if (bindingElements.length === 1) {
-                    addDiagnostic(kind, createDiagnosticForNode(bindingPattern, Diagnostics._0_is_declared_but_its_value_is_never_read, idText(cast(first(bindingElements).name, isIdentifier))));
+            });
+            unusedVariables.forEach(([varStatement, declarations]) => {
+                if (varStatement.declarationList.declarations.length === declarations.length) {
+                    addDiagnostic(UnusedKind.Local, declarations.length === 1
+                        ? createDiagnosticForNode(cast(first(declarations).name, isIdentifier), Diagnostics._0_is_declared_but_its_value_is_never_read, idText(cast(first(declarations).name, isIdentifier)))
+                        : createDiagnosticForNode(varStatement, Diagnostics.All_variables_are_unused));
                 }
                 else {
-                    addDiagnostic(kind, createDiagnosticForNode(bindingPattern, Diagnostics.All_destructured_elements_are_unused));
+                    for (const d of declarations) {
+                        addDiagnostic(UnusedKind.Local, createDiagnosticForNode(d, Diagnostics._0_is_declared_but_its_value_is_never_read, idText(cast(d.name, isIdentifier))));
+                    }
                 }
             });
         }
@@ -22776,12 +22794,6 @@ namespace ts {
         }
         function importClauseFromImported(decl: ImportedDeclaration): ImportClause {
             return decl.kind === SyntaxKind.ImportClause ? decl : decl.kind === SyntaxKind.NamespaceImport ? decl.parent : decl.parent.parent;
-        }
-
-        function forEachImportedDeclaration<T>(importClause: ImportClause, cb: (im: ImportedDeclaration) => T | undefined): T | undefined {
-            const { name: defaultName, namedBindings } = importClause;
-            return (defaultName && cb(importClause)) ||
-                namedBindings && (namedBindings.kind === SyntaxKind.NamespaceImport ? cb(namedBindings) : forEach(namedBindings.elements, cb));
         }
 
         function checkBlock(node: Block) {
