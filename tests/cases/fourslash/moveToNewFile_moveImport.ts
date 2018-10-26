@@ -2,6 +2,7 @@
 
 // @Filename: /a.ts
 ////[|import { a, b } from "m";
+////let l;
 ////a;|]
 ////b;
 
@@ -10,8 +11,10 @@ verify.moveToNewFile({
         "/a.ts":
 `import { b } from "m";
 b;`,
-        "/newFile.ts":
+        "/l.ts":
 `import { a } from "m";
-a;`,
+let l;
+a;
+`,
     }
 });

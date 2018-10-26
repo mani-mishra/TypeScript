@@ -38,7 +38,7 @@ namespace ts {
         context.enableEmitNotification(SyntaxKind.SourceFile); // Restore state when substituting nodes in a file.
 
         const moduleInfoMap: ExternalModuleInfo[] = []; // The ExternalModuleInfo for each file.
-        const deferredExports: Statement[][] = []; // Exports to defer until an EndOfDeclarationMarker is found.
+        const deferredExports: (Statement[] | undefined)[] = []; // Exports to defer until an EndOfDeclarationMarker is found.
 
         let currentSourceFile: SourceFile; // The current file.
         let currentModuleInfo: ExternalModuleInfo; // The ExternalModuleInfo for the current file.
@@ -53,7 +53,10 @@ namespace ts {
          * @param node The SourceFile node.
          */
         function transformSourceFile(node: SourceFile) {
-            if (node.isDeclarationFile || !(isEffectiveExternalModule(node, compilerOptions) || node.transformFlags & TransformFlags.ContainsDynamicImport)) {
+            if (node.isDeclarationFile ||
+                !(isEffectiveExternalModule(node, compilerOptions) ||
+                    node.transformFlags & TransformFlags.ContainsDynamicImport ||
+                    (isJsonSourceFile(node) && hasJsonModuleEmitEnabled(compilerOptions) && (compilerOptions.out || compilerOptions.outFile)))) {
                 return node;
             }
 
@@ -64,8 +67,8 @@ namespace ts {
             // Perform the transformation.
             const transformModule = getTransformModuleDelegate(moduleKind);
             const updated = transformModule(node);
-            currentSourceFile = undefined;
-            currentModuleInfo = undefined;
+            currentSourceFile = undefined!;
+            currentModuleInfo = undefined!;
             needUMDDynamicImportHelper = false;
             return aggregateTransformFlags(updated);
         }
@@ -97,7 +100,7 @@ namespace ts {
             append(statements, visitNode(currentModuleInfo.externalHelpersImportDeclaration, sourceElementVisitor, isStatement));
             addRange(statements, visitNodes(node.statements, sourceElementVisitor, isStatement, statementOffset));
             addExportEqualsIfNeeded(statements, /*emitAsReturn*/ false);
-            prependRange(statements, endLexicalEnvironment());
+            addStatementsAfterPrologue(statements, endLexicalEnvironment());
 
             const updated = updateSourceFileNode(node, setTextRange(createNodeArray(statements), node.statements));
             if (currentModuleInfo.hasExportStarsToExportValues && !compilerOptions.importHelpers) {
@@ -117,6 +120,7 @@ namespace ts {
         function transformAMDModule(node: SourceFile) {
             const define = createIdentifier("define");
             const moduleName = tryGetModuleNameFromFile(node, host, compilerOptions);
+            const jsonSourceFile = isJsonSourceFile(node) && node;
 
             // An AMD define function has the following shape:
             //
@@ -147,7 +151,7 @@ namespace ts {
             const updated = updateSourceFileNode(node,
                 setTextRange(
                     createNodeArray([
-                        createStatement(
+                        createExpressionStatement(
                             createCall(
                                 define,
                                 /*typeArguments*/ undefined,
@@ -158,7 +162,7 @@ namespace ts {
                                     // Add the dependency array argument:
                                     //
                                     //     ["require", "exports", module1", "module2", ...]
-                                    createArrayLiteral([
+                                    createArrayLiteral(jsonSourceFile ? emptyArray : [
                                         createLiteral("require"),
                                         createLiteral("exports"),
                                         ...aliasedModuleNames,
@@ -168,7 +172,9 @@ namespace ts {
                                     // Add the module body function argument:
                                     //
                                     //     function (require, exports, module1, module2) ...
-                                    createFunctionExpression(
+                                    jsonSourceFile ?
+                                        jsonSourceFile.statements.length ? jsonSourceFile.statements[0].expression : createObjectLiteral() :
+                                        createFunctionExpression(
                                         /*modifiers*/ undefined,
                                         /*asteriskToken*/ undefined,
                                         /*name*/ undefined,
@@ -240,7 +246,7 @@ namespace ts {
                                                 createIdentifier("v"),
                                                 createIdentifier("undefined")
                                             ),
-                                            createStatement(
+                                            createExpressionStatement(
                                                 createAssignment(
                                                     createPropertyAccess(createIdentifier("module"), "exports"),
                                                     createIdentifier("v")
@@ -256,7 +262,7 @@ namespace ts {
                                         createPropertyAccess(createIdentifier("define"), "amd")
                                     ),
                                     createBlock([
-                                        createStatement(
+                                        createExpressionStatement(
                                             createCall(
                                                 createIdentifier("define"),
                                                 /*typeArguments*/ undefined,
@@ -299,7 +305,7 @@ namespace ts {
                 node,
                 setTextRange(
                     createNodeArray([
-                        createStatement(
+                        createExpressionStatement(
                             createCall(
                                 umdHeader,
                                 /*typeArguments*/ undefined,
@@ -391,12 +397,12 @@ namespace ts {
             if (isImportEqualsDeclaration(node) || isExportDeclaration(node) || !getExternalModuleNameLiteral(node, currentSourceFile, host, resolver, compilerOptions)) {
                 return undefined;
             }
-            const name = getLocalNameForExternalImport(node, currentSourceFile);
+            const name = getLocalNameForExternalImport(node, currentSourceFile)!; // TODO: GH#18217
             const expr = getHelperExpressionForImport(node, name);
             if (expr === name) {
                 return undefined;
             }
-            return createStatement(createAssignment(name, expr));
+            return createExpressionStatement(createAssignment(name, expr));
         }
 
         /**
@@ -426,7 +432,7 @@ namespace ts {
 
             // End the lexical environment for the module body
             // and merge any new lexical declarations.
-            prependRange(statements, endLexicalEnvironment());
+            addStatementsAfterPrologue(statements, endLexicalEnvironment());
 
             const body = createBlock(statements, /*multiLine*/ true);
             if (currentModuleInfo.hasExportStarsToExportValues && !compilerOptions.importHelpers) {
@@ -460,7 +466,7 @@ namespace ts {
                         statements.push(statement);
                     }
                     else {
-                        const statement = createStatement(
+                        const statement = createExpressionStatement(
                             createAssignment(
                                 createPropertyAccess(
                                     createIdentifier("module"),
@@ -605,7 +611,7 @@ namespace ts {
             }
         }
 
-        function createImportCallExpressionUMD(arg: Expression | undefined, containsLexicalThis: boolean): Expression {
+        function createImportCallExpressionUMD(arg: Expression, containsLexicalThis: boolean): Expression {
             // (function (factory) {
             //      ... (regular UMD)
             // }
@@ -652,7 +658,7 @@ namespace ts {
                 createParameter(/*decorator*/ undefined, /*modifiers*/ undefined, /*dotDotDotToken*/ undefined, /*name*/ reject)
             ];
             const body = createBlock([
-                createStatement(
+                createExpressionStatement(
                     createCall(
                         createIdentifier("require"),
                         /*typeArguments*/ undefined,
@@ -762,12 +768,12 @@ namespace ts {
          * @param node The node to visit.
          */
         function visitImportDeclaration(node: ImportDeclaration): VisitResult<Statement> {
-            let statements: Statement[];
+            let statements: Statement[] | undefined;
             const namespaceDeclaration = getNamespaceDeclarationNode(node);
             if (moduleKind !== ModuleKind.AMD) {
                 if (!node.importClause) {
                     // import "mod";
-                    return setTextRange(createStatement(createRequireCall(node)), node);
+                    return setOriginalNode(setTextRange(createExpressionStatement(createRequireCall(node)), node), node);
                 }
                 else {
                     const variables: VariableDeclaration[] = [];
@@ -806,15 +812,17 @@ namespace ts {
                     }
 
                     statements = append(statements,
-                        setTextRange(
-                            createVariableStatement(
-                                /*modifiers*/ undefined,
-                                createVariableDeclarationList(
-                                    variables,
-                                    languageVersion >= ScriptTarget.ES2015 ? NodeFlags.Const : NodeFlags.None
-                                )
-                            ),
-                            /*location*/ node
+                        setOriginalNode(
+                            setTextRange(
+                                createVariableStatement(
+                                    /*modifiers*/ undefined,
+                                    createVariableDeclarationList(
+                                        variables,
+                                        languageVersion >= ScriptTarget.ES2015 ? NodeFlags.Const : NodeFlags.None
+                                    )
+                                ),
+                                /*location*/ node),
+                            /*original*/ node
                         )
                     );
                 }
@@ -826,13 +834,15 @@ namespace ts {
                         /*modifiers*/ undefined,
                         createVariableDeclarationList(
                             [
-                                setTextRange(
-                                    createVariableDeclaration(
-                                        getSynthesizedClone(namespaceDeclaration.name),
-                                        /*type*/ undefined,
-                                        getGeneratedNameForNode(node)
-                                    ),
-                                    /*location*/ node
+                                setOriginalNode(
+                                    setTextRange(
+                                        createVariableDeclaration(
+                                            getSynthesizedClone(namespaceDeclaration.name),
+                                            /*type*/ undefined,
+                                            getGeneratedNameForNode(node)
+                                        ),
+                                        /*location*/ node),
+                                    /*original*/ node
                                 )
                             ],
                             languageVersion >= ScriptTarget.ES2015 ? NodeFlags.Const : NodeFlags.None
@@ -876,37 +886,41 @@ namespace ts {
         function visitImportEqualsDeclaration(node: ImportEqualsDeclaration): VisitResult<Statement> {
             Debug.assert(isExternalModuleImportEqualsDeclaration(node), "import= for internal module references should be handled in an earlier transformer.");
 
-            let statements: Statement[];
+            let statements: Statement[] | undefined;
             if (moduleKind !== ModuleKind.AMD) {
                 if (hasModifier(node, ModifierFlags.Export)) {
                     statements = append(statements,
-                        setTextRange(
-                            createStatement(
-                                createExportExpression(
-                                    node.name,
-                                    createRequireCall(node)
-                                )
-                            ),
+                        setOriginalNode(
+                            setTextRange(
+                                createExpressionStatement(
+                                    createExportExpression(
+                                        node.name,
+                                        createRequireCall(node)
+                                    )
+                                ),
+                                node),
                             node
                         )
                     );
                 }
                 else {
                     statements = append(statements,
-                        setTextRange(
-                            createVariableStatement(
-                                /*modifiers*/ undefined,
-                                createVariableDeclarationList(
-                                    [
-                                        createVariableDeclaration(
-                                            getSynthesizedClone(node.name),
-                                            /*type*/ undefined,
-                                            createRequireCall(node)
-                                        )
-                                    ],
-                                    /*flags*/ languageVersion >= ScriptTarget.ES2015 ? NodeFlags.Const : NodeFlags.None
-                                )
-                            ),
+                        setOriginalNode(
+                            setTextRange(
+                                createVariableStatement(
+                                    /*modifiers*/ undefined,
+                                    createVariableDeclarationList(
+                                        [
+                                            createVariableDeclaration(
+                                                getSynthesizedClone(node.name),
+                                                /*type*/ undefined,
+                                                createRequireCall(node)
+                                            )
+                                        ],
+                                        /*flags*/ languageVersion >= ScriptTarget.ES2015 ? NodeFlags.Const : NodeFlags.None
+                                    )
+                                ),
+                                node),
                             node
                         )
                     );
@@ -915,10 +929,12 @@ namespace ts {
             else {
                 if (hasModifier(node, ModifierFlags.Export)) {
                     statements = append(statements,
-                        setTextRange(
-                            createStatement(
-                                createExportExpression(getExportName(node), getLocalName(node))
-                            ),
+                        setOriginalNode(
+                            setTextRange(
+                                createExpressionStatement(
+                                    createExportExpression(getExportName(node), getLocalName(node))
+                                ),
+                                node),
                             node
                         )
                     );
@@ -956,18 +972,20 @@ namespace ts {
                 // export { x, y } from "mod";
                 if (moduleKind !== ModuleKind.AMD) {
                     statements.push(
-                        setTextRange(
-                            createVariableStatement(
-                                /*modifiers*/ undefined,
-                                createVariableDeclarationList([
-                                    createVariableDeclaration(
-                                        generatedName,
-                                        /*type*/ undefined,
-                                        createRequireCall(node)
-                                    )
-                                ])
-                            ),
-                            /*location*/ node
+                        setOriginalNode(
+                            setTextRange(
+                                createVariableStatement(
+                                    /*modifiers*/ undefined,
+                                    createVariableDeclarationList([
+                                        createVariableDeclaration(
+                                            generatedName,
+                                            /*type*/ undefined,
+                                            createRequireCall(node)
+                                        )
+                                    ])
+                                ),
+                                /*location*/ node),
+                            /* original */ node
                         )
                     );
                 }
@@ -977,10 +995,12 @@ namespace ts {
                         specifier.propertyName || specifier.name
                     );
                     statements.push(
-                        setTextRange(
-                            createStatement(
-                                createExportExpression(getExportName(specifier), exportedValue)
-                            ),
+                        setOriginalNode(
+                            setTextRange(
+                                createExpressionStatement(
+                                    createExportExpression(getExportName(specifier), exportedValue)
+                                ),
+                                specifier),
                             specifier
                         )
                     );
@@ -990,10 +1010,12 @@ namespace ts {
             }
             else {
                 // export * from "mod";
-                return setTextRange(
-                    createStatement(
-                        createExportStarHelper(context, moduleKind !== ModuleKind.AMD ? createRequireCall(node) : generatedName)
-                    ),
+                return setOriginalNode(
+                    setTextRange(
+                        createExpressionStatement(
+                            createExportStarHelper(context, moduleKind !== ModuleKind.AMD ? createRequireCall(node) : generatedName)
+                        ),
+                        node),
                     node
                 );
             }
@@ -1009,7 +1031,7 @@ namespace ts {
                 return undefined;
             }
 
-            let statements: Statement[];
+            let statements: Statement[] | undefined;
             const original = node.original;
             if (original && hasAssociatedEndOfDeclarationMarker(original)) {
                 // Defer exports until we encounter an EndOfDeclarationMarker node
@@ -1029,7 +1051,7 @@ namespace ts {
          * @param node The node to visit.
          */
         function visitFunctionDeclaration(node: FunctionDeclaration): VisitResult<Statement> {
-            let statements: Statement[];
+            let statements: Statement[] | undefined;
             if (hasModifier(node, ModifierFlags.Export)) {
                 statements = append(statements,
                     setOriginalNode(
@@ -1072,7 +1094,7 @@ namespace ts {
          * @param node The node to visit.
          */
         function visitClassDeclaration(node: ClassDeclaration): VisitResult<Statement> {
-            let statements: Statement[];
+            let statements: Statement[] | undefined;
             if (hasModifier(node, ModifierFlags.Export)) {
                 statements = append(statements,
                     setOriginalNode(
@@ -1113,12 +1135,12 @@ namespace ts {
          * @param node The node to visit.
          */
         function visitVariableStatement(node: VariableStatement): VisitResult<Statement> {
-            let statements: Statement[];
-            let variables: VariableDeclaration[];
-            let expressions: Expression[];
+            let statements: Statement[] | undefined;
+            let variables: VariableDeclaration[] | undefined;
+            let expressions: Expression[] | undefined;
 
             if (hasModifier(node, ModifierFlags.Export)) {
-                let modifiers: NodeArray<Modifier>;
+                let modifiers: NodeArray<Modifier> | undefined;
 
                 // If we're exporting these variables, then these just become assignments to 'exports.x'.
                 // We only want to emit assignments for variables with initializers.
@@ -1140,7 +1162,7 @@ namespace ts {
                 }
 
                 if (expressions) {
-                    statements = append(statements, setTextRange(createStatement(inlineExpressions(expressions)), node));
+                    statements = append(statements, setOriginalNode(setTextRange(createExpressionStatement(inlineExpressions(expressions)), node), node));
                 }
             }
             else {
@@ -1219,7 +1241,7 @@ namespace ts {
             //
             // To balance the declaration, add the exports of the elided variable
             // statement.
-            if (hasAssociatedEndOfDeclarationMarker(node) && node.original.kind === SyntaxKind.VariableStatement) {
+            if (hasAssociatedEndOfDeclarationMarker(node) && node.original!.kind === SyntaxKind.VariableStatement) {
                 const id = getOriginalNodeId(node);
                 deferredExports[id] = appendExportsOfVariableStatement(deferredExports[id], <VariableStatement>node.original);
             }
@@ -1429,7 +1451,7 @@ namespace ts {
         function createUnderscoreUnderscoreESModule() {
             let statement: Statement;
             if (languageVersion === ScriptTarget.ES3) {
-                statement = createStatement(
+                statement = createExpressionStatement(
                     createExportExpression(
                         createIdentifier("__esModule"),
                         createLiteral(/*value*/ true)
@@ -1437,7 +1459,7 @@ namespace ts {
                 );
             }
             else {
-                statement = createStatement(
+                statement = createExpressionStatement(
                     createCall(
                         createPropertyAccess(createIdentifier("Object"), "defineProperty"),
                         /*typeArguments*/ undefined,
@@ -1464,7 +1486,7 @@ namespace ts {
          * @param allowComments An optional value indicating whether to emit comments for the statement.
          */
         function createExportStatement(name: Identifier, value: Expression, location?: TextRange, allowComments?: boolean) {
-            const statement = setTextRange(createStatement(createExportExpression(name, value)), location);
+            const statement = setTextRange(createExpressionStatement(createExportExpression(name, value)), location);
             startOnNewLine(statement);
             if (!allowComments) {
                 setEmitFlags(statement, EmitFlags.NoComments);
@@ -1532,9 +1554,9 @@ namespace ts {
 
                 previousOnEmitNode(hint, node, emitCallback);
 
-                currentSourceFile = undefined;
-                currentModuleInfo = undefined;
-                noSubstitution = undefined;
+                currentSourceFile = undefined!;
+                currentModuleInfo = undefined!;
+                noSubstitution = undefined!;
             }
             else {
                 previousOnEmitNode(hint, node, emitCallback);

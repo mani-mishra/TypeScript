@@ -37,11 +37,13 @@ namespace ts {
         getText(): string;
         // Sets the text for the scanner to scan.  An optional subrange starting point and length
         // can be provided to have the scanner only scan a portion of the text.
-        setText(text: string, start?: number, length?: number): void;
-        setOnError(onError: ErrorCallback): void;
+        setText(text: string | undefined, start?: number, length?: number): void;
+        setOnError(onError: ErrorCallback | undefined): void;
         setScriptTarget(scriptTarget: ScriptTarget): void;
         setLanguageVariant(variant: LanguageVariant): void;
         setTextPos(textPos: number): void;
+        /* @internal */
+        setInJSDocType(inType: boolean): void;
         // Invokes the provided callback then unconditionally restores the scanner to the state it
         // was in immediately prior to invoking the callback.  The result of invoking the callback
         // is returned from this function.
@@ -58,80 +60,87 @@ namespace ts {
         tryScan<T>(callback: () => T): T;
     }
 
-    const textToToken = createMapFromTemplate({
-        "abstract": SyntaxKind.AbstractKeyword,
-        "any": SyntaxKind.AnyKeyword,
-        "as": SyntaxKind.AsKeyword,
-        "boolean": SyntaxKind.BooleanKeyword,
-        "break": SyntaxKind.BreakKeyword,
-        "case": SyntaxKind.CaseKeyword,
-        "catch": SyntaxKind.CatchKeyword,
-        "class": SyntaxKind.ClassKeyword,
-        "continue": SyntaxKind.ContinueKeyword,
-        "const": SyntaxKind.ConstKeyword,
-        "constructor": SyntaxKind.ConstructorKeyword,
-        "debugger": SyntaxKind.DebuggerKeyword,
-        "declare": SyntaxKind.DeclareKeyword,
-        "default": SyntaxKind.DefaultKeyword,
-        "delete": SyntaxKind.DeleteKeyword,
-        "do": SyntaxKind.DoKeyword,
-        "else": SyntaxKind.ElseKeyword,
-        "enum": SyntaxKind.EnumKeyword,
-        "export": SyntaxKind.ExportKeyword,
-        "extends": SyntaxKind.ExtendsKeyword,
-        "false": SyntaxKind.FalseKeyword,
-        "finally": SyntaxKind.FinallyKeyword,
-        "for": SyntaxKind.ForKeyword,
-        "from": SyntaxKind.FromKeyword,
-        "function": SyntaxKind.FunctionKeyword,
-        "get": SyntaxKind.GetKeyword,
-        "if": SyntaxKind.IfKeyword,
-        "implements": SyntaxKind.ImplementsKeyword,
-        "import": SyntaxKind.ImportKeyword,
-        "in": SyntaxKind.InKeyword,
-        "infer": SyntaxKind.InferKeyword,
-        "instanceof": SyntaxKind.InstanceOfKeyword,
-        "interface": SyntaxKind.InterfaceKeyword,
-        "is": SyntaxKind.IsKeyword,
-        "keyof": SyntaxKind.KeyOfKeyword,
-        "let": SyntaxKind.LetKeyword,
-        "module": SyntaxKind.ModuleKeyword,
-        "namespace": SyntaxKind.NamespaceKeyword,
-        "never": SyntaxKind.NeverKeyword,
-        "new": SyntaxKind.NewKeyword,
-        "null": SyntaxKind.NullKeyword,
-        "number": SyntaxKind.NumberKeyword,
-        "object": SyntaxKind.ObjectKeyword,
-        "package": SyntaxKind.PackageKeyword,
-        "private": SyntaxKind.PrivateKeyword,
-        "protected": SyntaxKind.ProtectedKeyword,
-        "public": SyntaxKind.PublicKeyword,
-        "readonly": SyntaxKind.ReadonlyKeyword,
-        "require": SyntaxKind.RequireKeyword,
-        "global": SyntaxKind.GlobalKeyword,
-        "return": SyntaxKind.ReturnKeyword,
-        "set": SyntaxKind.SetKeyword,
-        "static": SyntaxKind.StaticKeyword,
-        "string": SyntaxKind.StringKeyword,
-        "super": SyntaxKind.SuperKeyword,
-        "switch": SyntaxKind.SwitchKeyword,
-        "symbol": SyntaxKind.SymbolKeyword,
-        "this": SyntaxKind.ThisKeyword,
-        "throw": SyntaxKind.ThrowKeyword,
-        "true": SyntaxKind.TrueKeyword,
-        "try": SyntaxKind.TryKeyword,
-        "type": SyntaxKind.TypeKeyword,
-        "typeof": SyntaxKind.TypeOfKeyword,
-        "undefined": SyntaxKind.UndefinedKeyword,
-        "unique": SyntaxKind.UniqueKeyword,
-        "var": SyntaxKind.VarKeyword,
-        "void": SyntaxKind.VoidKeyword,
-        "while": SyntaxKind.WhileKeyword,
-        "with": SyntaxKind.WithKeyword,
-        "yield": SyntaxKind.YieldKeyword,
-        "async": SyntaxKind.AsyncKeyword,
-        "await": SyntaxKind.AwaitKeyword,
-        "of": SyntaxKind.OfKeyword,
+    const textToKeywordObj: MapLike<KeywordSyntaxKind> = {
+        abstract: SyntaxKind.AbstractKeyword,
+        any: SyntaxKind.AnyKeyword,
+        as: SyntaxKind.AsKeyword,
+        boolean: SyntaxKind.BooleanKeyword,
+        break: SyntaxKind.BreakKeyword,
+        case: SyntaxKind.CaseKeyword,
+        catch: SyntaxKind.CatchKeyword,
+        class: SyntaxKind.ClassKeyword,
+        continue: SyntaxKind.ContinueKeyword,
+        const: SyntaxKind.ConstKeyword,
+        ["" + "constructor"]: SyntaxKind.ConstructorKeyword,
+        debugger: SyntaxKind.DebuggerKeyword,
+        declare: SyntaxKind.DeclareKeyword,
+        default: SyntaxKind.DefaultKeyword,
+        delete: SyntaxKind.DeleteKeyword,
+        do: SyntaxKind.DoKeyword,
+        else: SyntaxKind.ElseKeyword,
+        enum: SyntaxKind.EnumKeyword,
+        export: SyntaxKind.ExportKeyword,
+        extends: SyntaxKind.ExtendsKeyword,
+        false: SyntaxKind.FalseKeyword,
+        finally: SyntaxKind.FinallyKeyword,
+        for: SyntaxKind.ForKeyword,
+        from: SyntaxKind.FromKeyword,
+        function: SyntaxKind.FunctionKeyword,
+        get: SyntaxKind.GetKeyword,
+        if: SyntaxKind.IfKeyword,
+        implements: SyntaxKind.ImplementsKeyword,
+        import: SyntaxKind.ImportKeyword,
+        in: SyntaxKind.InKeyword,
+        infer: SyntaxKind.InferKeyword,
+        instanceof: SyntaxKind.InstanceOfKeyword,
+        interface: SyntaxKind.InterfaceKeyword,
+        is: SyntaxKind.IsKeyword,
+        keyof: SyntaxKind.KeyOfKeyword,
+        let: SyntaxKind.LetKeyword,
+        module: SyntaxKind.ModuleKeyword,
+        namespace: SyntaxKind.NamespaceKeyword,
+        never: SyntaxKind.NeverKeyword,
+        new: SyntaxKind.NewKeyword,
+        null: SyntaxKind.NullKeyword,
+        number: SyntaxKind.NumberKeyword,
+        object: SyntaxKind.ObjectKeyword,
+        package: SyntaxKind.PackageKeyword,
+        private: SyntaxKind.PrivateKeyword,
+        protected: SyntaxKind.ProtectedKeyword,
+        public: SyntaxKind.PublicKeyword,
+        readonly: SyntaxKind.ReadonlyKeyword,
+        require: SyntaxKind.RequireKeyword,
+        global: SyntaxKind.GlobalKeyword,
+        return: SyntaxKind.ReturnKeyword,
+        set: SyntaxKind.SetKeyword,
+        static: SyntaxKind.StaticKeyword,
+        string: SyntaxKind.StringKeyword,
+        super: SyntaxKind.SuperKeyword,
+        switch: SyntaxKind.SwitchKeyword,
+        symbol: SyntaxKind.SymbolKeyword,
+        this: SyntaxKind.ThisKeyword,
+        throw: SyntaxKind.ThrowKeyword,
+        true: SyntaxKind.TrueKeyword,
+        try: SyntaxKind.TryKeyword,
+        type: SyntaxKind.TypeKeyword,
+        typeof: SyntaxKind.TypeOfKeyword,
+        undefined: SyntaxKind.UndefinedKeyword,
+        unique: SyntaxKind.UniqueKeyword,
+        unknown: SyntaxKind.UnknownKeyword,
+        var: SyntaxKind.VarKeyword,
+        void: SyntaxKind.VoidKeyword,
+        while: SyntaxKind.WhileKeyword,
+        with: SyntaxKind.WithKeyword,
+        yield: SyntaxKind.YieldKeyword,
+        async: SyntaxKind.AsyncKeyword,
+        await: SyntaxKind.AwaitKeyword,
+        of: SyntaxKind.OfKeyword,
+    };
+
+    const textToKeyword = createMapFromTemplate(textToKeywordObj);
+
+    const textToToken = createMapFromTemplate<SyntaxKind>({
+        ...textToKeywordObj,
         "{": SyntaxKind.OpenBraceToken,
         "}": SyntaxKind.CloseBraceToken,
         "(": SyntaxKind.OpenParenToken,
@@ -266,14 +275,14 @@ namespace ts {
         return false;
     }
 
-    /* @internal */ export function isUnicodeIdentifierStart(code: number, languageVersion: ScriptTarget) {
-        return languageVersion >= ScriptTarget.ES5 ?
+    /* @internal */ export function isUnicodeIdentifierStart(code: number, languageVersion: ScriptTarget | undefined) {
+        return languageVersion! >= ScriptTarget.ES5 ?
             lookupInUnicodeMap(code, unicodeES5IdentifierStart) :
             lookupInUnicodeMap(code, unicodeES3IdentifierStart);
     }
 
-    function isUnicodeIdentifierPart(code: number, languageVersion: ScriptTarget) {
-        return languageVersion >= ScriptTarget.ES5 ?
+    function isUnicodeIdentifierPart(code: number, languageVersion: ScriptTarget | undefined) {
+        return languageVersion! >= ScriptTarget.ES5 ?
             lookupInUnicodeMap(code, unicodeES5IdentifierPart) :
             lookupInUnicodeMap(code, unicodeES3IdentifierPart);
     }
@@ -601,7 +610,7 @@ namespace ts {
     }
 
     function scanShebangTrivia(text: string, pos: number) {
-        const shebang = shebangTriviaRegex.exec(text)[0];
+        const shebang = shebangTriviaRegex.exec(text)![0];
         pos = pos + shebang.length;
         return pos;
     }
@@ -626,11 +635,11 @@ namespace ts {
      * @returns If "reduce" is true, the accumulated value. If "reduce" is false, the first truthy
      *      return value of the callback.
      */
-    function iterateCommentRanges<T, U>(reduce: boolean, text: string, pos: number, trailing: boolean, cb: (pos: number, end: number, kind: CommentKind, hasTrailingNewLine: boolean, state: T, memo: U) => U, state: T, initial?: U): U {
-        let pendingPos: number;
-        let pendingEnd: number;
-        let pendingKind: CommentKind;
-        let pendingHasTrailingNewLine: boolean;
+    function iterateCommentRanges<T, U>(reduce: boolean, text: string, pos: number, trailing: boolean, cb: (pos: number, end: number, kind: CommentKind, hasTrailingNewLine: boolean, state: T, memo: U | undefined) => U, state: T, initial?: U): U | undefined {
+        let pendingPos!: number;
+        let pendingEnd!: number;
+        let pendingKind!: CommentKind;
+        let pendingHasTrailingNewLine!: boolean;
         let hasPendingCommentRange = false;
         let collecting = trailing || pos === 0;
         let accumulator = initial;
@@ -769,20 +778,20 @@ namespace ts {
         }
     }
 
-    export function isIdentifierStart(ch: number, languageVersion: ScriptTarget): boolean {
+    export function isIdentifierStart(ch: number, languageVersion: ScriptTarget | undefined): boolean {
         return ch >= CharacterCodes.A && ch <= CharacterCodes.Z || ch >= CharacterCodes.a && ch <= CharacterCodes.z ||
             ch === CharacterCodes.$ || ch === CharacterCodes._ ||
             ch > CharacterCodes.maxAsciiCharacter && isUnicodeIdentifierStart(ch, languageVersion);
     }
 
-    export function isIdentifierPart(ch: number, languageVersion: ScriptTarget): boolean {
+    export function isIdentifierPart(ch: number, languageVersion: ScriptTarget | undefined): boolean {
         return ch >= CharacterCodes.A && ch <= CharacterCodes.Z || ch >= CharacterCodes.a && ch <= CharacterCodes.z ||
             ch >= CharacterCodes._0 && ch <= CharacterCodes._9 || ch === CharacterCodes.$ || ch === CharacterCodes._ ||
             ch > CharacterCodes.maxAsciiCharacter && isUnicodeIdentifierPart(ch, languageVersion);
     }
 
     /* @internal */
-    export function isIdentifierText(name: string, languageVersion: ScriptTarget): boolean {
+    export function isIdentifierText(name: string, languageVersion: ScriptTarget | undefined): boolean {
         if (!isIdentifierStart(name.charCodeAt(0), languageVersion)) {
             return false;
         }
@@ -800,12 +809,15 @@ namespace ts {
     export function createScanner(languageVersion: ScriptTarget,
                                   skipTrivia: boolean,
                                   languageVariant = LanguageVariant.Standard,
-                                  text?: string,
+                                  textInitial?: string,
                                   onError?: ErrorCallback,
                                   start?: number,
                                   length?: number): Scanner {
+        let text = textInitial!;
+
         // Current position (end position of text of current token)
         let pos: number;
+
 
         // end of text
         let end: number;
@@ -817,8 +829,10 @@ namespace ts {
         let tokenPos: number;
 
         let token: SyntaxKind;
-        let tokenValue: string;
+        let tokenValue!: string;
         let tokenFlags: TokenFlags;
+
+        let inJSDocType = 0;
 
         setText(text, start, length);
 
@@ -850,6 +864,7 @@ namespace ts {
             setLanguageVariant,
             setOnError,
             setTextPos,
+            setInJSDocType,
             tryScan,
             lookAhead,
             scanRange,
@@ -907,8 +922,8 @@ namespace ts {
         function scanNumber(): string {
             const start = pos;
             const mainFragment = scanNumberFragment();
-            let decimalFragment: string;
-            let scientificFragment: string;
+            let decimalFragment: string | undefined;
+            let scientificFragment: string | undefined;
             if (text.charCodeAt(pos) === CharacterCodes.dot) {
                 pos++;
                 decimalFragment = scanNumberFragment();
@@ -1279,15 +1294,15 @@ namespace ts {
             return result;
         }
 
-        function getIdentifierToken(): SyntaxKind {
+        function getIdentifierToken(): SyntaxKind.Identifier | KeywordSyntaxKind {
             // Reserved words are between 2 and 11 characters long and start with a lowercase letter
             const len = tokenValue.length;
             if (len >= 2 && len <= 11) {
                 const ch = tokenValue.charCodeAt(0);
                 if (ch >= CharacterCodes.a && ch <= CharacterCodes.z) {
-                    token = textToToken.get(tokenValue);
-                    if (token !== undefined) {
-                        return token;
+                    const keyword = textToKeyword.get(tokenValue);
+                    if (keyword !== undefined) {
+                        return token = keyword;
                     }
                 }
             }
@@ -1305,7 +1320,7 @@ namespace ts {
             let isPreviousTokenSeparator = false;
             while (true) {
                 const ch = text.charCodeAt(pos);
-                // Numeric seperators are allowed anywhere within a numeric literal, except not at the beginning, or following another separator
+                // Numeric separators are allowed anywhere within a numeric literal, except not at the beginning, or following another separator
                 if (ch === CharacterCodes._) {
                     tokenFlags |= TokenFlags.ContainsSeparator;
                     if (separatorAllowed) {
@@ -1346,6 +1361,7 @@ namespace ts {
         function scan(): SyntaxKind {
             startPos = pos;
             tokenFlags = 0;
+            let asteriskSeen = false;
             while (true) {
                 tokenPos = pos;
                 if (pos >= end) {
@@ -1386,6 +1402,24 @@ namespace ts {
                     case CharacterCodes.verticalTab:
                     case CharacterCodes.formFeed:
                     case CharacterCodes.space:
+                    case CharacterCodes.nonBreakingSpace:
+                    case CharacterCodes.ogham:
+                    case CharacterCodes.enQuad:
+                    case CharacterCodes.emQuad:
+                    case CharacterCodes.enSpace:
+                    case CharacterCodes.emSpace:
+                    case CharacterCodes.threePerEmSpace:
+                    case CharacterCodes.fourPerEmSpace:
+                    case CharacterCodes.sixPerEmSpace:
+                    case CharacterCodes.figureSpace:
+                    case CharacterCodes.punctuationSpace:
+                    case CharacterCodes.thinSpace:
+                    case CharacterCodes.hairSpace:
+                    case CharacterCodes.zeroWidthSpace:
+                    case CharacterCodes.narrowNoBreakSpace:
+                    case CharacterCodes.mathematicalSpace:
+                    case CharacterCodes.ideographicSpace:
+                    case CharacterCodes.byteOrderMark:
                         if (skipTrivia) {
                             pos++;
                             continue;
@@ -1443,6 +1477,11 @@ namespace ts {
                             return pos += 2, token = SyntaxKind.AsteriskAsteriskToken;
                         }
                         pos++;
+                        if (inJSDocType && !asteriskSeen && (tokenFlags & TokenFlags.PrecedingLineBreak)) {
+                            // decoration at the start of a JSDoc comment line
+                            asteriskSeen = true;
+                            continue;
+                        }
                         return token = SyntaxKind.AsteriskToken;
                     case CharacterCodes.plus:
                         if (text.charCodeAt(pos + 1) === CharacterCodes.plus) {
@@ -1929,6 +1968,7 @@ namespace ts {
 
         function scanJSDocToken(): JsDocSyntaxKind {
             startPos = tokenPos = pos;
+            tokenFlags = 0;
             if (pos >= end) {
                 return token = SyntaxKind.EndOfFileToken;
             }
@@ -1948,6 +1988,7 @@ namespace ts {
                     return token = SyntaxKind.AtToken;
                 case CharacterCodes.lineFeed:
                 case CharacterCodes.carriageReturn:
+                    tokenFlags |= TokenFlags.PrecedingLineBreak;
                     return token = SyntaxKind.NewLineTrivia;
                 case CharacterCodes.asterisk:
                     return token = SyntaxKind.AsteriskToken;
@@ -1981,7 +2022,7 @@ namespace ts {
                     pos++;
                 }
                 tokenValue = text.substring(tokenPos, pos);
-                return token = SyntaxKind.Identifier;
+                return token = getIdentifierToken();
             }
             else {
                 return token = SyntaxKind.Unknown;
@@ -2045,13 +2086,13 @@ namespace ts {
             return text;
         }
 
-        function setText(newText: string, start: number, length: number) {
+        function setText(newText: string | undefined, start: number | undefined, length: number | undefined) {
             text = newText || "";
-            end = length === undefined ? text.length : start + length;
+            end = length === undefined ? text.length : start! + length;
             setTextPos(start || 0);
         }
 
-        function setOnError(errorCallback: ErrorCallback) {
+        function setOnError(errorCallback: ErrorCallback | undefined) {
             onError = errorCallback;
         }
 
@@ -2069,8 +2110,12 @@ namespace ts {
             startPos = textPos;
             tokenPos = textPos;
             token = SyntaxKind.Unknown;
-            tokenValue = undefined;
+            tokenValue = undefined!;
             tokenFlags = 0;
+        }
+
+        function setInJSDocType(inType: boolean) {
+            inJSDocType += inType ? 1 : -1;
         }
     }
 }
